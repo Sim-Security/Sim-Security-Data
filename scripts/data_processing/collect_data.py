@@ -1,23 +1,29 @@
 # scripts/data_processing/collect_data.py
-
-import os
-from utils.fetchers import fetch_audit_reports
-from utils.pdf_processing import process_spearbit_pdfs
-from utils.markdown_cleaners import clean_markdown_directory
+from pathlib import Path
+from utils.fetchers import GitFetcher
+from utils.pdf_processing import PDFProcessor
+from utils.markdown_cleaners import MarkdownCleaner
 
 def main():
-    # Step 1: Fetch audit reports (e.g., clone the Spearbit repository)
-    fetch_audit_reports()
-
+    # Step 1: Fetch audit reports
+    fetcher = GitFetcher()
+    fetcher.fetch_audit_reports()
+    
     # Step 2: Convert PDFs to markdown
-    process_spearbit_pdfs()
-
-    # Step 3: Clean the markdown files
-    markdown_input_dir = 'data/audits/spearbit_portfolio/markdown'
-    markdown_output_dir = 'data/processed/reports'
-    clean_markdown_directory(markdown_input_dir, markdown_output_dir)
-
-    print("Data ingestion and preprocessing completed successfully.")
+    pdf_dir = Path("data/audits/spearbit_portfolio/pdfs")
+    markdown_dir = Path("data/audits/spearbit_portfolio/markdown")
+    
+    processor = PDFProcessor(pdf_dir, markdown_dir)
+    converted_files = processor.process_pdfs()
+    
+    # Step 3: Clean markdown files
+    output_dir = Path("data/processed/reports")
+    cleaner = MarkdownCleaner(markdown_dir, output_dir)
+    cleaned_files = cleaner.clean_directory()
+    
+    print("\nData ingestion and preprocessing completed.")
+    print(f"Converted {len(converted_files)} PDF files to markdown")
+    print(f"Cleaned {len(cleaned_files)} markdown files")
 
 if __name__ == "__main__":
     main()
