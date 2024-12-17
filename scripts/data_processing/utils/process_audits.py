@@ -1,4 +1,5 @@
-# scripts/process_audits.py
+# scripts/data_processing/utils/process_audits.py
+# May or may not need this
 import os
 from pathlib import Path
 import anthropic

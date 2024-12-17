@@ -3,3 +3,4 @@ data/
 .env
 audit_processing.egg-info/
 outputs/
+Old files/

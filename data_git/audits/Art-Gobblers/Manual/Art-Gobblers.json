@@ -1,0 +1,103 @@
+{
+    "auditTitle": "Art Gobblers Security Review",
+    "auditDate": "2022-10-28",
+    "auditor": "Spearbit", 
+    "project": {
+      "name": "Art Gobblers",
+      "repo": "https://github.com/art-gobblers/art-gobblers",  // I found the repo - please confirm
+      "website": "[MISSING - Please provide the Art Gobblers website]" 
+    },
+    "codebase": {
+      "files": [ 
+        {
+          "path": "/contracts/ArtGobblers.sol",
+          "content": "[MISSING - Please provide the content of ArtGobblers.sol]"
+        },
+        {
+          "path": "/contracts/LibString.sol",
+          "content": "[MISSING - Please provide the content of LibString.sol]"
+        },
+        {
+          "path": "/contracts/Pages.sol",
+          "content": "[MISSING - Please provide the content of Pages.sol]"
+        },
+        {
+          "path": "/contracts/LogisticVRGDA.sol",
+          "content": "[MISSING - Please provide the content of LogisticVRGDA.sol]"
+        },
+        {
+          "path": "/contracts/VRGDA.sol",
+          "content": "[MISSING - Please provide the content of VRGDA.sol]"
+        },
+        {
+          "path": "/contracts/GobblersERC1155B.sol",
+          "content": "[MISSING - Please provide the content of GobblersERC1155B.sol]"
+        },
+        {
+          "path": "/contracts/PagesERC721.sol",
+          "content": "[MISSING - Please provide the content of PagesERC721.sol]"
+        },
+        {
+          "path": "/contracts/SignedWadMath.sol",
+          "content": "[MISSING - Please provide the content of SignedWadMath.sol]"
+        },
+        {
+          "path": "/contracts/GobblerReserve.sol",
+          "content": "[MISSING - Please provide the content of GobblerReserve.sol]"
+        },
+        {
+          "path": "/contracts/Goo.sol",
+          "content": "[MISSING - Please provide the content of Goo.sol]"
+        }
+        // ... add any other contract files from the repository
+      ]
+    },
+    "vulnerabilities": [
+      {
+        "title": "claimGobbler Function Does Not Enforce MINTLIST_SUPPLY On-Chain",
+        "severity": "low",
+        "vulnerabilityType": "Insufficient Validation", 
+        "exploitScenario": "An attacker could potentially create more than 2000 proofs, exceeding the intended limit for claiming Gobblers.",
+        "remediation": "Enforce the MINTLIST_SUPPLY limit on-chain by tracking the number of claims or publish the merkle proof data for off-chain verification.",
+        "references": [],
+        "code": {
+          "filePath": "/contracts/ArtGobblers.sol",
+          "snippet": "[MISSING - Please provide the code snippet from ArtGobblers.sol (lines 287-304)]",
+          "vulnerableFunction": "claimGobbler",
+          "vulnerableLines": [287, 304], 
+          "controlFlow": "[MISSING - Please describe the control flow related to the claiming process]"
+        }
+      },
+      {
+        "title": "Feeding a Gobbler to Itself May Lead to an Infinite Loop in the Off-Chain Renderer",
+        "severity": "low",
+        "vulnerabilityType": "Renderer Issue", 
+        "exploitScenario": "Feeding a Gobbler to itself could cause an infinite loop in the off-chain renderer, potentially disrupting the visualization or functionality of the Gobblers.",
+        "remediation": "Disallow self-feeding or design the off-chain renderer to handle self-feeding cases gracefully.",
+        "references": [],
+        "code": {
+          "filePath": "/contracts/ArtGobblers.sol",
+          "snippet": "[MISSING - Please provide the code snippet from ArtGobblers.sol (line 653)]",
+          "vulnerableFunction": "[MISSING - Please provide the function name related to feeding Gobblers]", 
+          "vulnerableLines": [653],
+          "controlFlow": "[MISSING - Please describe the control flow related to feeding Gobblers]"
+        }
+      },
+      {
+        "title": "toString() Function Does Not Manage Memory Properly",
+        "severity": "low",
+        "vulnerabilityType": "Memory Management",
+        "exploitScenario": "The `toString()` function's incorrect memory management could lead to memory overlaps or data corruption, especially if used in a generic context.",
+        "remediation": "Allocate sufficient memory and explicitly zero out used memory in the `toString()` function.",
+        "references": [],
+        "code": {
+          "filePath": "/contracts/LibString.sol",
+          "snippet": "[MISSING - Please provide the code snippet from LibString.sol (lines 7-72)]",
+          "vulnerableFunction": "toString",
+          "vulnerableLines": [7, 72],
+          "controlFlow": "[MISSING - Please describe the control flow within the toString() function]"
+        }
+      },
+      // ... add more vulnerability objects from the audit report
+    ]
+  }
