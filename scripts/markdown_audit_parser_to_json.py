@@ -4,14 +4,14 @@ import anthropic
 import json
 import logging
 import re
-from typing import Dict, List, Optional, Iterator, Any
+from typing import Dict, List, Optional, Iterator
 from datetime import datetime
 from dataclasses import dataclass, asdict
 import jsonschema
 from tqdm import tqdm
 from dotenv import load_dotenv
 
-# Set up logging
+# Set up logging 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
@@ -25,6 +25,12 @@ class ParsingProgress:
     processed_findings: List[int] = None
     failed_findings: List[int] = None
     
+    def __post_init__(self):
+        if self.processed_findings is None:
+            self.processed_findings = []
+        if self.failed_findings is None:
+            self.failed_findings = []
+    
     def to_dict(self) -> Dict:
         return asdict(self)
     
@@ -35,7 +41,6 @@ class ParsingProgress:
 class FindingValidator:
     """Validate parsed findings against schema."""
     
-    # Schema for a single finding
     FINDING_SCHEMA = {
         "type": "object",
         "required": ["title", "severity", "vulnerabilityType", "code"],
@@ -68,250 +73,141 @@ class FindingValidator:
     
     @classmethod
     def validate_finding(cls, finding: Dict) -> tuple[bool, Optional[str]]:
-        """Validate a finding against the schema."""
         try:
             jsonschema.validate(instance=finding, schema=cls.FINDING_SCHEMA)
             return True, None
         except jsonschema.exceptions.ValidationError as e:
             return False, str(e)
 
-class BatchedAuditParser:
+class AuditParser:
     def __init__(self):
         load_dotenv()
         self.client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
         self.validator = FindingValidator()
         self.progress: Optional[ParsingProgress] = None
 
-    def _save_progress(self, progress_dir: Path) -> None:
-        """Save current parsing progress."""
-        if self.progress:
-            progress_file = progress_dir / f"{Path(self.progress.markdown_path).stem}_progress.json"
-            progress_dir.mkdir(parents=True, exist_ok=True)
-            with open(progress_file, 'w') as f:
-                json.dump(self.progress.to_dict(), f)
-
-    def _load_progress(self, markdown_path: Path, progress_dir: Path) -> Optional[ParsingProgress]:
-        """Load previous parsing progress if it exists."""
-        progress_file = progress_dir / f"{markdown_path.stem}_progress.json"
-        if progress_file.exists():
-            with open(progress_file, 'r') as f:
-                return ParsingProgress.from_dict(json.load(f))
-        return None
-
-    def extract_metadata(self, content: str, progress_dir: Path) -> Dict:
-        """Extract basic metadata from the start of the audit report."""
-        if self.progress and self.progress.metadata_extracted:
-            logger.info("Metadata already extracted, skipping...")
-            return {}
-            
+    def parse_finding(self, finding_content: str, finding_index: int) -> Optional[Dict]:
+        """Parse a single finding into JSON format."""
         try:
-            header_section = self._get_header_section(content)
-            
-            message = """Extract the following metadata as JSON:
-            - auditTitle (string)
-            - auditDate (YYYY-MM-DD format)
-            - auditor (string)
-            - projectName (string)
-
-            Return only the JSON object, nothing else.
-
-            Content:
-            """
-            message += header_section
-
-            response = self.client.messages.create(
-                model="claude-3-sonnet-20240229",
-                max_tokens=500,
-                temperature=0,
-                messages=[{"role": "user", "content": message}]
-            )
-            
-            metadata = json.loads(response.content[0].text)
-            
-            # Update progress
-            if self.progress:
-                self.progress.metadata_extracted = True
-                self._save_progress(progress_dir)
-                
-            logger.info("Successfully extracted metadata")
-            return metadata
-            
-        except Exception as e:
-            logger.error(f"Error extracting metadata: {e}")
-            return self._get_default_metadata()
-
-    def parse_single_finding(self, finding_content: str, finding_index: int) -> Optional[Dict]:
-        """Parse a single finding using Claude and validate it."""
-        try:
-            message = """Convert this finding into a JSON object with this structure:
+            message = """Convert this finding into a JSON object with exactly these fields:
             {
-                "title": "string",
-                "severity": "Critical|High|Medium|Low|Gas|Informational",
-                "vulnerabilityType": "string",
-                "exploitScenario": "string",
-                "remediation": "string",
-                "references": [],
+                "title": <extract from ### heading>,
+                "severity": <must be one of: Critical, High, Medium, Low, Gas, Informational>,
+                "vulnerabilityType": <determine from description>,
+                "exploitScenario": <extract from description or synthesize>,
+                "remediation": <extract from Recommendation section>,
                 "code": {
-                    "filePath": "string",
-                    "snippet": "string",
-                    "vulnerableFunction": "string",
-                    "vulnerableLines": [integers],
-                    "controlFlow": "string"
+                    "filePath": <extract contract name from Context>,
+                    "vulnerableFunction": <extract function name from context/description>,
+                    "vulnerableLines": <extract line numbers as integer array, use [] if none>,
+                    "snippet": <extract code blocks if any>,
+                    "controlFlow": <describe the vulnerable flow>
                 }
             }
 
-            The severity MUST be one of the exact values listed.
-            vulnerableLines must be integers.
-            All other fields should be properly formatted strings.
-            Return only the JSON object, nothing else.
+            Important:
+            - vulnerableLines must be integers in an array, use [] if none found
+            - severity must be exactly one of the allowed values
+            - extract exact file paths and line numbers from Context section
+            - include all code blocks in snippet field
 
-            Finding content:
-            """
-            message += finding_content
+            Return ONLY the JSON object, no other text."""
 
             response = self.client.messages.create(
                 model="claude-3-sonnet-20240229",
                 max_tokens=1000,
                 temperature=0,
-                messages=[{"role": "user", "content": message}]
+                messages=[{
+                    "role": "user", 
+                    "content": message + "\n\nFinding Content:\n" + finding_content
+                }]
             )
+
+            # Extract and clean JSON
+            response_text = response.content[0].text.strip()
+            json_start = response_text.find('{')
+            json_end = response_text.rfind('}') + 1
+            if json_start >= 0 and json_end > json_start:
+                response_text = response_text[json_start:json_end]
             
-            finding = json.loads(response.content[0].text)
-            
-            # Validate finding
+            # Parse and validate
+            finding = json.loads(response_text)
             is_valid, error = FindingValidator.validate_finding(finding)
+            
             if not is_valid:
                 logger.error(f"Finding {finding_index} failed validation: {error}")
-                if self.progress:
-                    self.progress.failed_findings.append(finding_index)
                 return None
                 
-            logger.info(f"Successfully parsed and validated finding {finding_index}: {finding.get('title', 'Untitled')}")
+            logger.info(f"Successfully parsed finding {finding_index}")
             return finding
             
         except Exception as e:
             logger.error(f"Error parsing finding {finding_index}: {e}")
-            if self.progress:
-                self.progress.failed_findings.append(finding_index)
             return None
 
-    def parse_audit_markdown(
-        self, 
-        markdown_path: Path,
-        progress_dir: Path,
-        codebase_path: Optional[Path] = None
-    ) -> Dict:
-        """Parse audit markdown into complete JSON structure with progress tracking."""
-        logger.info(f"Processing audit markdown: {markdown_path}")
-
-        # Load or initialize progress
-        self.progress = self._load_progress(markdown_path, progress_dir)
-        if not self.progress:
-            self.progress = ParsingProgress(
-                markdown_path=str(markdown_path),
-                processed_findings=[],
-                failed_findings=[]
-            )
-
+    def split_findings(self, content: str) -> Iterator[str]:
+        """Split markdown content into individual findings."""
         try:
-            # Read markdown content
+            findings_section = content.split("## Findings", 1)[1].split("## Appendix")[0]
+            
+            # Match finding headers and capture content until next finding
+            finding_pattern = r"### \[.*?\].*?(?=### \[|$)"
+            findings = re.finditer(finding_pattern, findings_section, re.DOTALL)
+            
+            for finding in findings:
+                yield finding.group(0).strip()
+                
+        except Exception as e:
+            logger.error(f"Error splitting findings: {e}")
+            return []
+
+    def parse_audit_report(self, markdown_path: Path, output_path: Path) -> None:
+        """Parse entire audit report and save to JSON."""
+        try:
+            # Read content
             with open(markdown_path, 'r', encoding='utf-8') as f:
                 content = f.read()
-
-            # Extract metadata if needed
-            metadata = self.extract_metadata(content, progress_dir)
-
-            # Split findings if needed
-            if not self.progress.findings_split:
-                findings = list(self.split_findings(content))
-                self.progress.total_findings = len(findings)
-                self.progress.findings_split = True
-                self._save_progress(progress_dir)
-            else:
-                findings = list(self.split_findings(content))
-
-            # Process findings with progress bar
-            vulnerabilities = []
-            remaining_findings = [
-                i for i in range(len(findings)) 
-                if i not in self.progress.processed_findings
-            ]
+                
+            # Extract metadata
+            metadata = self.extract_metadata(content)
             
-            with tqdm(remaining_findings, desc="Processing findings") as pbar:
-                for i in pbar:
-                    if i in self.progress.processed_findings:
-                        continue
-                        
-                    pbar.set_description(f"Processing finding {i+1}/{len(findings)}")
-                    parsed_finding = self.parse_single_finding(findings[i], i)
+            # Process findings
+            findings = []
+            for i, finding in enumerate(self.split_findings(content)):
+                parsed = self.parse_finding(finding, i)
+                if parsed:
+                    findings.append(parsed)
                     
-                    if parsed_finding:
-                        vulnerabilities.append(parsed_finding)
-                        self.progress.processed_findings.append(i)
-                        self._save_progress(progress_dir)
-                    pbar.update(1)
-
-            # Load codebase if provided
-            codebase = {}
-            if codebase_path and codebase_path.exists():
-                with open(codebase_path, 'r') as f:
-                    codebase = json.load(f).get("codebase", {})
-
-            # Create complete audit report
-            audit_report = {
-                "auditTitle": metadata.get("auditTitle", "Unknown Audit"),
-                "auditDate": metadata.get("auditDate", datetime.now().strftime("%Y-%m-%d")),
+            # Create report
+            report = {
+                "auditTitle": metadata.get("title", "Unknown"),
+                "auditDate": metadata.get("date", datetime.now().strftime("%Y-%m-%d")),
                 "auditor": metadata.get("auditor", "Unknown"),
                 "project": {
-                    "name": metadata.get("projectName", "Unknown Project"),
-                    "repo": "",
-                    "website": ""
+                    "name": metadata.get("projectName", "Unknown"),
+                    "repository": metadata.get("repository", ""),
+                    "commit": metadata.get("commit", ""),
                 },
-                "codebase": codebase,
-                "vulnerabilities": vulnerabilities
+                "findings": findings
             }
-
-            # Report statistics
-            total = len(findings)
-            processed = len(self.progress.processed_findings)
-            failed = len(self.progress.failed_findings)
-            logger.info(f"\nProcessing complete:")
-            logger.info(f"Total findings: {total}")
-            logger.info(f"Successfully processed: {processed}")
-            logger.info(f"Failed: {failed}")
             
-            return audit_report
-
+            # Save report
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(output_path, 'w', encoding='utf-8') as f:
+                json.dump(report, f, indent=2)
+                
+            logger.info(f"Successfully saved parsed report to {output_path}")
+            
         except Exception as e:
-            logger.error(f"Error processing audit markdown: {e}")
+            logger.error(f"Error parsing audit report: {e}")
             raise
 
-def process_audit_markdown(
-    markdown_path: Path,
-    output_path: Path,
-    progress_dir: Path,
-    codebase_path: Optional[Path] = None
-) -> None:
-    """Process a markdown audit report and save as JSON."""
-    parser = BatchedAuditParser()
-    
-    # Parse and save report
-    report = parser.parse_audit_markdown(markdown_path, progress_dir, codebase_path)
-    
-    # Save the report
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(output_path, 'w', encoding='utf-8') as f:
-        json.dump(report, f, indent=2)
-    logger.info(f"Successfully saved audit report to {output_path}")
-
 def main():
-    # Example usage
-    markdown_path = Path("data/audits/spearbit_portfolio/markdown/ArtGobblers/ArtGobblers/report.md")
-    output_path = Path("data/final/art_gobblers_audit.json")
-    progress_dir = Path("data/progress")
-    codebase_path = Path("data/processed/art_gobblers_codebase.json")
+    input_path = Path("data/processed/Art-Gobblers-Review-Cleaned.md") 
+    output_path = Path("data/final/art_gobblers_audit2.json")
     
-    process_audit_markdown(markdown_path, output_path, progress_dir, codebase_path)
+    parser = AuditParser()
+    parser.parse_audit_report(input_path, output_path)
 
 if __name__ == "__main__":
     main()
